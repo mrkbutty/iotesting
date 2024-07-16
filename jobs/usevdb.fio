@@ -1,0 +1,16 @@
+
+[global]
+bs=128K
+iodepth=1
+direct=1
+ioengine=posixaio
+group_reporting
+time_based
+runtime=30
+numjobs=4
+name=seqread
+rw=read
+rate_iops=1000
+
+[job1]
+opendir=/vdbtest/vdb.1_1.dir

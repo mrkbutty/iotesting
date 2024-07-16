@@ -1,0 +1,13 @@
+messagescan=nodisplay
+
+# Host Definitions
+#hd=default,vdbench=/bmhome/vdbench50407,user=root,shell=/usr/bin/ssh,jvms=8
+
+#hd=lg1,system=172.23.80.163
+#hd=lg2,system=172.23.80.164
+#hd=lg3,system=172.23.80.166
+
+fsd=fsd1,anchor=/vdbtest,depth=2,width=5,files=10,size=(4k,20,512k,20,1m,20,5m,20,10m,15,1g,5),totalsize=3G
+fwd=fwd1,fsd=fsd1,operation=read,xfersize=256k,fileio=sequential,fileselect=random,threads=8
+rd=rd1,fwd=fwd1,fwdrate=max,format=no,elapsed=15,interval=5
+

@@ -1,0 +1,53 @@
+messagescan=nodisplay
+
+# Host Definitions
+hd=default,vdbench=/bmhome/vdbench50407,user=root,shell=/usr/bin/ssh,jvms=12
+
+#hd=hlg162,system=172.23.80.162
+#hd=hlg163,system=172.23.80.163
+#hd=hlg164,system=172.23.80.164
+
+# Storage Definitions
+sd=default,openflags=o_direct
+sd=sd_1,lun=/dev/mapper/mpathx
+sd=sd_2,lun=/dev/mapper/mpathy  
+sd=sd_3,lun=/dev/mapper/mpathz  
+
+# ==========================================
+# Workload Definitions
+# ==========================================
+#
+wd=wd1,sd=(sd*)
+
+#wd=wd_8k_hh_random_read_skew34,sd=(sd*),xfersize=8k,rdpct=100,seekpct=100,skew=34,rhpct=70,range=(0,90)
+#wd=wd_8k_hh_random_write_skew51,sd=(sd*),xfersize=8k,rdpct=0,seekpct=100,skew=51,whpct=70,range=(0,90)
+#wd=wd_8k_lh_random_read_skew34,sd=(sd*),xfersize=8k,rdpct=100,seekpct=100,skew=34,rhpct=30,range=(0,90)
+#wd=wd_8k_lh_random_write_skew51,sd=(sd*),xfersize=8k,rdpct=0,seekpct=100,skew=51,whpct=30,range=(0,90)
+#wd=wd_16k_sequential_read_skew6,sd=(sd*),xfersize=16k,rdpct=100,seekpct=0,skew=6,range=(0,90)
+#wd=wd_16k_sequential_write_skew9,sd=(sd*),xfersize=16k,rdpct=0,seekpct=0,skew=9,range=(91,100)
+
+wd=read50,sd=(sd*),xfersize=256k,rdpct=100,seekpct=0,skew=50,rhpct=50,range=(0,50)
+wd=write50,sd=(sd*),xfersize=256k,rdpct=0,seekpct=0,skew=50,whpct=50,range=(51,100)
+
+# ==========================================
+# Run Definitions
+# ==========================================
+# The optimal thread count for random tests can be chosen by thread scalablility. Samples of thread scalability tests for
+# each random workload are shown below. Pick the thread count that offeres the highest IOPS with good response time. For
+# example, for cache miss random reads from flash drives, pick the thread count that results in highest IOPS with RT less
+# than or equal to 1 ms. Run thread scalability to select thread count before starting the iorate=curve tests. Note that
+# sequential tests are always single-threaded.
+
+# rd=runrr-ch-8ssd,wd=wd1,iorate=(max),elapsed=240,interval=5,xfersize=8k,forthreads=(1-10,1,12-20,2),rdpct=100,seekpct=100,rhpct=100
+# rd=runrr-c-8ssd,wd=wd1,iorate=(max),elapsed=240,interval=5,xfersize=8k,forthreads=(1-10,1,12-20,2),rdpct=100,seekpct=100
+# rd=runsr-c-8ssd,wd=wd1,iorate=(max),elapsed=240,interval=5,xfersize=256k,forthreads=(1-5,1),rdpct=100,seekpct=0
+# rd=runrw-ch-8ssd,wd=wd1,iorate=(max),elapsed=240,interval=5,xfersize=8k,forthreads=(1-10,1,12-20,2),rdpct=0,seekpct=100,whpct=100
+# rd=runrw-c-8ssd,wd=wd1,iorate=(max),elapsed=240,interval=5,xfersize=8k,forthreads=(1-10,1,12-20,2),rdpct=0,seekpct=100
+# rd=runsw-c-8ssd,wd=wd1,iorate=(max),elapsed=240,interval=5,xfersize=256k,forthreads=(1-5,1),rdpct=0,seekpct=0
+
+#rd=oltp_hh_8ssd,wd=(wd_8k_hh*,wd_16k*),iorate=(max),elapsed=240,interval=5,forthreads=(1-10,1)
+#rd=oltp_lh_8ssd,wd=(wd_8k_lh*,wd_16k*),iorate=(max),elapsed=240,interval=5,forthreads=(1-10,1)
+
+rd=seqw-ts,wd=wd1,iorate=(max),elapsed=60,interval=5,xfersize=256k,forthreads=(1-16,d),rdpct=0,seekpct=0
+rd=seqr-ts,wd=wd1,iorate=(max),elapsed=60,interval=5,xfersize=256k,forthreads=(1-16,d),rdpct=100,seekpct=0
+rd=rw50,wd=(read50,write50*),iorate=(max),elapsed=60,interval=5,forthreads=(1-16,d)

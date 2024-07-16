@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+[[ -n $RESHOME ]] && RESHOME=/bmresults
+CSV=${RESHOME:?}/test_copy.csv
+
+now=$(date +%Y%m%d%H%M%S)
+[[ -f ${CSV:?} ]] && mv ${CSV:?} ${CSV:?}.${now}
+
+# Running with --max-files or --max-gb seems to hang:
+test_copy.py --source-path /vdbtest/vdb.1_1.dir --destination-path /vdbtest/target --thread-count 16 --csv ${CSV:?}

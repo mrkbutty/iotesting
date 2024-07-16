@@ -1,0 +1,16 @@
+messagescan=nodisplay
+
+# Host Definitions
+hd=default,vdbench=/bmhome/vdbench50407,user=root,shell=/usr/bin/ssh,jvms=16
+
+#hd=lg1,system=172.23.80.163
+#hd=lg2,system=172.23.80.164
+#hd=lg3,system=172.23.80.166
+
+fsd=fsd1,anchor=/vdbtest,depth=1,width=1,files=1000000,size=(4k,1,1m,2,50m,3,100m,4,500m,5,1g,15,100g,16,500g,17,1000g,18,2000g,19),totalsize=60T
+
+#include=/vdbtest/fsd.vdb
+
+rd=rd1,fsd=fsd1,fwdrate=max,format=only,threads=16
+#rd=rd1,fsd=fsd1,fwdrate=max,format=restart
+

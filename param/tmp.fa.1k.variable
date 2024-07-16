@@ -1,0 +1,33 @@
+messagescan=nodisplay
+compratio=2
+
+# Host Definitions
+hd=default,vdbench=$VDBHOME,user=root,shell=/usr/bin/ssh,jvms=1
+
+#hd=lg1,system=172.23.80.163
+#hd=lg2,system=172.23.80.164
+#hd=lg3,system=172.23.80.166
+
+sd=sd2,host=localhost,lun=/tmp/vdbench.test.sd2,openflags=o_direct,size=64m
+
+wd=wdprefill,sd=(sd*),xfersize=256k,rdpct=0,seekpct=eof
+wd=wdrand,sd=(sd*),xfersize=256k,rdpct=0,seekpct=eof
+wd=64k_mixtest_adr_rndread,sd=sd*,hd=*,seekpct=100,rdpct=100,whpct=70,rhpct=70,xfersize=64k,skew=33,range=(0,25)
+wd=64k_mixtest_adr_rndwrite,sd=sd*,hd=*,seekpct=100,rdpct=0,whpct=70,rhpct=70,xfersize=64k,skew=17,range=(26,50)
+wd=64k_mixtest_adr_seqread,sd=sd*,hd=*,seekpct=0,rdpct=100,xfersize=64k,skew=33,range=(51,75)
+wd=64k_mixtest_adr_seqwrite,sd=sd*,hd=*,seekpct=0,rdpct=0,xfersize=64k,skew=17,range=(76,100)
+
+#rd=64kmix,wd=64k*,iorate=500,elapsed=60,interval=1,threads=6
+
+# FieldAverage Workload (will closely follow skew when using lower JVM counts):
+wd=fa_rread-hit,sd=(sd*),rdpct=100,xfersize=(24k),seekpct=100,range=(1m,2m),skew=36
+wd=fa_rread-miss,sd=(sd*),rdpct=100,xfersize=(24k),seekpct=100,range=(1,43),skew=16
+wd=fa_rwrite-hit,sd=(sd*),rdpct=0,xfersize=(24k),seekpct=100,range=(2m,3m),skew=11
+wd=fa_rwrite-miss,sd=(sd*),rdpct=0,xfersize=(24k),seekpct=100,range=(1,87),skew=17
+wd=fa_sread,sd=(sd*),rdpct=100,xfersize=(120k),seekpct=0,range=(88,93),skew=13
+wd=fa_swrite,sd=(sd*),rdpct=0,xfersize=(120k),seekpct=0,range=(94,100),skew=7
+
+# Field Average Run Definitions:
+rd=fa,wd=fa*,iorate=(1000,1),distribution=variable,warmup=60,elapsed=300,interval=5,forthreads=(1)
+
+

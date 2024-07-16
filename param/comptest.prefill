@@ -1,0 +1,16 @@
+messagescan=nodisplay
+#compratio=2
+
+# Host Definitions
+hd=default,vdbench=/bmhome/vdbench50407,user=root,shell=/usr/bin/ssh,jvms=1
+
+#hd=lg1,system=172.23.80.163
+#hd=lg2,system=172.23.80.164
+#hd=lg3,system=172.23.80.166
+
+sd=sd1,host=localhost,lun=/tmp/vdbench.test.nocomp,openflags=o_direct,size=4m
+
+wd=wdprefill,sd=(sd*),xfersize=256k,rdpct=0,seekpct=eof
+
+rd=prefill,wd=wdprefill,iorate=50,elapsed=999990,interval=5,threads=1
+

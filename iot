@@ -1,0 +1,462 @@
+#!/usr/bin/env bash
+# Host to Host setup for iSCSI and NVME/TCP
+# create a function under a function_help description to auto add
+
+SCRIPT=$(realpath "${BASH_SOURCE[0]}")
+SCRIPTPATH=$(dirname "$SCRIPT")
+
+# CONFIG=./CONFIG.h2h.cfg
+# source ${CONFIG:?}
+
+
+setip_help="Delete & setup <nicname> to <ipaddress> using [mtu] size"
+setip() {
+    hbaname=$1
+    ipaddress=$2
+    mtu=9000
+    [[ -n $3 ]] && mtu=$3
+
+    nmcli con del ${hbaname:?}
+    nmcli con add type ethernet con-name ${hbaname} ifname ${hbaname} ip4 ${ipaddress}/24 mtu $mtu
+}
+
+setmtu_help="Change <lgname> <hba> to <MTU-size>"
+setmtu() {
+    hbaname=$1
+    mtu=$2
+
+    nmcli con modify ${hbaname:?} 802-3-ethernet.mtu ${mtu:?}
+    nmcli con down ${hbaname:?}
+    sleep 1
+    nmcli con up ${hbaname:?}
+    ifconfig | grep ${hbaname:?}
+}
+
+create_nullblock_help="Setup [count] null block devices and run short test  "
+create_nullblock() {
+    devnum=4
+    [[ -n $1 ]] && devnum=$1
+
+    echo "Removing /dev/nullb* devices..."
+    modprobe -r null_blk 
+    sleep 3
+    echo "Creating /dev/nullb* devices..."
+    modprobe null_blk queue_mode=2 nr_devices=${devnum:?} gb=1 use_per_node_hctx=1
+    sleep 3
+
+    devs=$(ls -1 /dev/nullb*)
+    devs=$(echo $devs | sed 's/ /:/g')
+    echo "Using fio to verify devices: $devs"
+    [[ -n $devs ]] && fio --bs=256k --ioengine=libaio --iodepth=32 --numjobs=1 \
+                        --rw=randread --name=asyncverify --filename=${devs:?} \
+                        --direct=1 --time_based --runtime 3
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+    echo 
+}
+
+
+is_deletetarget_help="Teardown the iSCSI target config"
+is_deletetarget() {
+    echo "Removing old iSCSI target config..."
+    NAME="iqn.2003-01.org.linux-iscsi.$(hostname):$(hostname)"
+    targetcli /iscsi delete $NAME
+    for i in /dev/nullb*; do
+        sname=$(basename $i)
+        targetcli /backstores/block delete $sname
+    done
+    sleep 1
+}
+
+
+is_createtarget_help="Setup iSCSI target for null block devices"
+is_createtarget() {
+
+    is_deletetarget
+
+    IPPORT="4420"
+    NAME="iqn.2003-01.org.linux-iscsi.$(hostname):$(hostname)"
+    CLIENTIQN="iqn.1994-05.com.redhat:client"
+
+    command -v targetcli >/dev/null 2>&1 || { echo "ERROR: targetcli is not installed"; exit 1; }
+
+    echo "Starting target service..."
+    # May need to open ports (use firewall-cmd --state to check):
+    # firewall-cmd --permanent --add-port=3260/tcp
+    # firewall-cmd --reload
+    systemctl enable target
+    systemctl restart target
+    sleep 1
+    
+    echo "Creating iSCSI target ${NAME}"
+    targetcli /iscsi create $NAME
+
+    # Count must start at 1:
+    for i in /dev/nullb*; do
+        sname=$(basename $i)
+        echo "Creating iSCSI blockstore ${sname:?} to ${i} and LUN"
+        targetcli /backstores/block create name=${sname:?} dev=${i}
+        targetcli /iscsi/$NAME/tpg1/luns create /backstores/block/${sname:?}
+        # Note you can use "iscsi-iname" to generate a new client iqn
+        targetcli /iscsi/$NAME/tpg1/acls create $CLIENTIQN
+    done
+    targetcli ls
+    echo 'iSCSI target setup complete'
+}
+
+
+isls_help="List iSCSI client sessions and iSCSI targets"
+isls() {
+    iscsiadm -m session -P 3 | egrep --color=always "^|scsi disk.*" && multipath -ll
+    targetcli ls
+}
+
+
+is_connect_help="Connect iSCSI client to <targetip>"
+is_connect() {
+    targetip=$1
+
+    CLIENTIQN="iqn.1994-05.com.redhat:client"
+    # Note you can use "iscsi-iname" to generate a new client iqn:
+    [[ -f /etc/iscsi/initiatorname.iscsi.orig ]] || cp /etc/iscsi/initiatorname.iscsi /etc/iscsi/initiatorname.iscsi.orig
+    echo InitiatorName=$CLIENTIQN > /etc/iscsi/initiatorname.iscsi
+
+    sess=$(iscsiadm -m session)
+    if [[ -z $sess ]]; then
+        echo "Restarting iscsid service..."
+        systemctl restart iscsid.service
+        sleep 3
+    else
+        echo "ERROR: active iscsi sessions: cannot restart iscsid service (it could hang sessions)"
+    fi
+
+    echo "Discovering iSCSI target..."
+    iscsiadm -m discovery -t st -p ${targetip:?} -lD
+    sleep 1
+    lsblk -plo NAME,TRAN,TYPE,SIZE | awk '$2 == "iscsi"'
+    sleep 5
+    multipath -ll
+}
+
+
+is_disconnect_help="Disconnect iSCSI client <lgname> and clean up"
+is_disconnect() {
+    multipath -F   # flushes/deletes all mpath devices 
+    iscsiadm -m session -u
+    iscsiadm -m node -U all
+    iscsiadm -m node -o delete
+    for i in $(iscsiadm -m discovery| awk '{print $1}'); do
+        iscsiadm -m discoverydb -p $i -t st -o delete
+    done
+    for i in $(iscsiadm -m iface | awk '{print $1}'); do
+        iscsiadm -m iface -I $i -o delete
+    done
+    echo "Restarting iscsid service..."
+    systemctl restart iscsid.service
+
+    echo "To delete old mpath devices use: multipath -f mpathx"
+    echo "To delete all mpath devices use: multipath -F"
+    echo "To delete old sd devices use: echo 1 > /sys/block/sdx/device/delete" 
+}
+
+
+is_logout_help="Logout iscsi client (post discovery)"
+is_logout() {
+        iscsiadm -m node -U all -d3
+}
+
+
+is_login_help="Login iscsi client (post discovery)"
+is_login() {
+    echo "Restarting iscsid & multipath service..."
+    systemctl restart iscsid.service
+    sleep 1
+    systemctl restart multipathd.service
+    sleep 3
+    iscsiadm -m node -L all -d3
+}
+
+
+is_set_sessions_help="Set client <sessions>"
+is_set_sessions() {
+    sessions=$2
+
+    sed -nri '/^node.session.nr_sessions.*=/!p\;$anode.session.nr_sessions\ =\ '${sessions:?} /etc/iscsi/iscsid.conf
+    egrep -v "^#|^\s*$" /etc/iscsi/iscsid.conf
+    echo "You need to disconnect (logout & remove discoverydb) and re-connect (rebuild discovery db) to see multiple paths"
+    echo "You also may need to: systemctl restart multipathd.service"
+}
+
+
+is_set_multipath_help="Set multipath enable"
+is_set_multipath() {
+    mpathconf --enable --user_friendly_names y
+    systemctl enable multipathd.service
+    systemctl restart multipathd.service
+    sleep 3
+    # Use lsblk -pOP <device> to list all params
+    lsblk -plo NAME,TYPE,SCHED,SIZE | awk '$2 == "mpath"' | uniq -c
+    multipath -ll
+
+    echo "You should now use /dev/mpath* devices as block storage"
+    echo "Note that path selection algorithm has not been setup"
+
+    cat <<-'EOF'
+    # Example /etc/multipath.conf:
+    defaults {
+            user_friendly_names yes
+            find_multipaths yes
+            enable_foreign "^$"  # Disable all foreign libraries
+            path_selector "round-robin 0"
+            # path_selector "service-time 0"
+            path_grouping_policy  multibus
+            rr_min_io_rq 1
+            rr_min_io 1
+            prio const
+            rr_weight uniform
+    }
+EOF
+
+}
+
+
+nv_deletetarget_help="Teardown the NVMe target config"
+nv_deletetarget() {
+    echo "Removing old NVMe target config..."
+    nvmetcli clear
+    sleep 1
+}
+
+
+nv_createport_help="Create extra NVMe target ports; <portno> <targetip>"
+nv_createport() {
+    portno=$1
+    targetip=$2
+
+    IPPORT="4420"
+    echo "Creating nvmet port ${portno:?} for ${targetip:?}"
+    mkdir /sys/kernel/config/nvmet/ports/${portno:?} 
+    echo "ipv4" > /sys/kernel/config/nvmet/ports/${portno:?}/addr_adrfam 
+    echo "tcp" > /sys/kernel/config/nvmet/ports/${portno:?}/addr_trtype 
+    echo $IPPORT > /sys/kernel/config/nvmet/ports/${portno:?}/addr_trsvcid 
+    echo ${targetip:?} > /sys/kernel/config/nvmet/ports/${portno:?}/addr_traddr
+    nvmetcli ls
+}
+
+nv_createtarget_help="Setup NVMe target for null block devices <targetip>"
+nv_createtarget() {
+    targetip=$1
+
+    nv_deletetarget
+
+    IPPORT="4420"
+    NAME="nvme-nullb"    # Use "nvme-ssd" while configuring SSDs
+
+    command -v nvmetcli >/dev/null 2>&1 || { echo "ERROR: nvmetcli is not installed"; exit 1; }
+    
+    echo "Creating nvmet subsystem ${NAME}"
+    mkdir /sys/kernel/config/nvmet/subsystems/${NAME} 
+
+    # Count must start at 1:
+    count=1
+    for i in /dev/nullb*; do
+        echo "Creating nvmet namespace ${count} to ${i}" 
+        mkdir -p /sys/kernel/config/nvmet/subsystems/${NAME}/namespaces/${count}
+        echo -n ${i} >/sys/kernel/config/nvmet/subsystems/${NAME}/namespaces/${count}/device_path       
+        echo 1 > /sys/kernel/config/nvmet/subsystems/${NAME}/namespaces/${count}/enable
+        ((count++))
+    done 
+
+    echo 1 > /sys/kernel/config/nvmet/subsystems/${NAME}/attr_allow_any_host 
+    
+    echo "Creating nvmet port for ${targetip:?}"
+    mkdir /sys/kernel/config/nvmet/ports/1 
+    echo "ipv4" > /sys/kernel/config/nvmet/ports/1/addr_adrfam 
+    echo "tcp" > /sys/kernel/config/nvmet/ports/1/addr_trtype 
+    echo $IPPORT > /sys/kernel/config/nvmet/ports/1/addr_trsvcid 
+    echo ${targetip:?} > /sys/kernel/config/nvmet/ports/1/addr_traddr
+    
+    ln -s /sys/kernel/config/nvmet/subsystems/${NAME} /sys/kernel/config/nvmet/ports/1/subsystems/${NAME}
+
+    nvmetcli ls
+    echo 'NVMe target setup complete'
+}
+
+
+nvls_help="List NVMe/TCP client connections and NVMe targets"
+nvls() {
+    ssh ${lgname:?} 'nvme list-subsys && nvme list && grep -Hv zzz /sys/class/nvme/nvme0/* 2> /dev/null'
+    ssh ${lgname:?} 'nvmetcli ls'
+}
+
+
+nv_connect_help="Connect NVMe/TCP client to <targetip>"
+nv_connect() {
+    targetip=$1
+
+    # Note: -i will set the number of I/O queues, -w will add more write queues:
+    nvme connect-all -t tcp -a '${targetip:?}' -s 4420 && sleep 3 && nvme list
+}
+
+
+nv_disconnect_help="Disconnect NVMe/TCP client from all subsystems"
+nv_disconnect() {
+    nvme disconnect-all && sleep 3 && nvme list
+}
+
+lsblk_help="List block devices"
+lsblk() {
+    # Use lsblk -pOP <device> to list all params
+    lsblk -plo NAME,TYPE,TRAN,SCHED,SIZE
+}
+
+
+lsdm_help="List device mapper tree"
+lsdm() {
+    dmsetup ls -o blkdevname --tree
+}
+
+
+sched_help="List or set the IO scheduler [set] [scheduler] [nomerges]"
+sched(){
+    if [[ -n $1 ]]; then
+        sched=none
+        nomerges=2
+        [[ -n $3 ]] && sched=$3
+        [[ -n $4 ]] && nomerges=$4
+        echo "Setting active scheduler to $sched..."
+        for i in /sys/block/{sd,dm}*/queue/scheduler; do echo' $sched '> $i; done
+        echo "Setting active merges to $nomerges (note: 2=disabled)..."
+        for i in /sys/block/{sd,dm}*/queue/nomerges; do echo' $nomerges '> $i; done
+    fi
+    grep -Hv zzz /sys/block/{sd,dm}*/queue/{scheduler,nomerges,max_sectors_kb}
+}
+
+is_fiotest_help="Run an fio 256KB random read test on iSCSI devices for [seconds] [iodepth] [numjobs]"
+is_fiotest() {
+    seconds=10
+    iodepth=1
+    numjobs=16
+    [[ -n $1 ]] && seconds=$1
+    [[ -n $2 ]] && iodepth=$2
+    [[ -n $3 ]] && numjobs=$3
+
+    echo "Running on $(hostname)"
+    devs=$(lsblk -plo NAME,TRAN | awk '$2=="iscsi" {print $1}')
+    devs=$(echo $devs | sed 's/ /:/g')
+    echo "Using fio to benchmark devices: $devs"
+    [[ -n $devs ]] && fio --bs=256k --ioengine=libaio --iodepth=${iodepth:?} --numjobs=${numjobs:?} \
+                        --rw=randread --name=AIO_iSCSI_verify --filename=${devs:?} \
+                        --direct=1 --time_based --ramp_time 10 --runtime ${seconds:?} --group_reporting #--status-interval=5
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+}
+
+
+mp_fiotest_help="Run an fio 256KB random read test on multipath devices for [seconds] [iodepth] [numjobs] [256k] [randread]"
+mp_fiotest() {
+    seconds=10
+    iodepth=1
+    numjobs=16
+    blocksize=256k
+    iotype=randread
+    [[ -n $1 ]] && seconds=$1
+    [[ -n $2 ]] && iodepth=$2
+    [[ -n $3 ]] && numjobs=$3
+    [[ -n $4 ]] && blocksize=$4
+    [[ -n $5 ]] && iotype=$5
+
+    echo "Running on $(hostname)"
+    devs=$(lsblk -plo NAME,TYPE | uniq | awk '$2=="mpath" {print $1}')
+    devs=$(echo $devs | sed 's/ /:/g')
+    echo "Using fio to benchmark devices: $devs"
+    [[ -n $devs ]] && fio --bs=${blocksize:?} --ioengine=libaio --iodepth=${iodepth:?} --numjobs=${numjobs:?} \
+                        --rw=${iotype:?} --name=AIO_iSCSI_verify --filename=${devs:?} \
+                        --direct=1 --time_based --ramp_time 10 --runtime ${seconds:?} --group_reporting #--status-interval=5
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+}
+
+
+nv_fiotest_help="Run an fio 256KB random read test on <lgname> NVMe devices for [seconds] [iodepth] [numjobs] [256k] [randread]"
+nv_fiotest() {
+    seconds=10
+    iodepth=1
+    numjobs=16
+    blocksize=256k
+    iotype=randread
+    [[ -n $1 ]] && seconds=$1
+    [[ -n $2 ]] && iodepth=$2
+    [[ -n $3 ]] && numjobs=$3
+    [[ -n $4 ]] && blocksize=$4
+    [[ -n $5 ]] && iotype=$5
+
+    echo "Running on $(hostname)"
+    devs=$(lsblk -plo NAME,TRAN | awk '$2=="nvme" {print $1}')
+    devs=$(echo $devs | sed 's/ /:/g')
+    echo "Using fio to benchmark devices: $devs"
+    [[ -n $devs ]] && fio --bs=${blocksize:?} --ioengine=libaio --iodepth=${iodepth:?} --numjobs=${numjobs:?} \
+                        --rw=${iotype:?} --name=AIO_NVMeTCP_verify --filename=${devs:?} \
+                        --direct=1 --time_based --ramp_time 10 --runtime ${seconds:?} --group_reporting \
+                        $FIOPARAMS 
+                        # --disable_lat=1 --disable_slat=1 --disable_bw_measurement=1 \
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+}
+
+_archivedir() {
+    dir_name=$1
+    [[ ! -d ${dir_name:?} ]] && return
+    now=$(date +%Y%m%d%H%M%S)
+    echo "Archiving existing dir: ${dir_name:?} to ${dir_name:?}.$now"
+    mv "${dir_name:?}" "${dir_name:?}.$now"
+}
+
+
+vdb_help="Run VDbench with <paramfile>, and output into [resultdir]"
+vdb() {
+    paramfile=$1
+    result_root=/tmp/vdb_test_results
+    [[ -n $2 ]] && result_root=$2
+    VDBENCH=${SCRIPTPATH:?}/vdbench50407/vdbench
+
+    [[ ! -f ${paramfile:?} ]] && { echo "ERROR: cannot find: $paramfile"; exit 1; }
+    grep '$VDBHOME' ${paramfile:?} > /dev/null || echo "ERROR: parameter file must contain \$VDBHOME location"
+    [[ ! -x ${VDBENCH:?} ]] && echo "ERROR: cannot find executable: $VDBENCH"
+
+    paramname=$(basename $paramfile)
+    result_dir=${result_root:?}/${paramname:?}
+    _archivedir $result_dir
+
+    echo "Results output: $result_dir"
+    echo "Running VDbench with paramfile: $paramfile"
+    ${VDBENCH:?} -d27 -f ${paramfile:?} -o ${result_dir:?} VDBHOME=$(dirname ${VDBENCH:?})
+}
+
+
+usage() {
+    echo "Locahost IO testing tools"
+    echo "-------------------------"
+    echo "Usage: $(basename $0) <command> <args>..."
+    echo ""
+
+    declare -F | awk '{print $3}' | while read -r funname; do
+        help=${funname}_help
+        [[ -n ${!help} ]] && echo -e "\t${funname}\t- ${!help}"
+    done
+    echo ""
+    [[ -n $RESTOP ]] && echo "RESHOME: ${RESHOME:?}"
+    # raidqry -l
+    echo ""
+    return 0
+}
+
+
+[[ $# -lt 1 ]] && usage
+command=${1}
+shift
+if declare -F | egrep "^declare -f ${command}$" > /dev/null; then
+    ${command} "$@" # preserves quoting
+else
+    echo ERROR: command not found: $command
+fi

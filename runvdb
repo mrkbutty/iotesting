@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+SCRIPT=$(realpath "${BASH_SOURCE[0]}")
+SCRIPTPATH=$(dirname "$SCRIPT")
+
+[[ -z $RESTOP ]] && RESTOP=/tmp/vdbtest_results
+
+PARAMFILE=${1:?}
+NAME=$(basename ${PARAMFILE:?})
+
+VDBHOME=${SCRIPTPATH:?}/vdbench50407
+#JVMS=16
+RESULTDIR=${RESTOP:?}/${NAME:?}
+
+
+now=$(date +%Y%m%d%H%M%S)
+[[ -d ${RESULTDIR:?} ]] && mv ${RESULTDIR:?} ${RESULTDIR:?}.${now}
+${VDBHOME:?}/vdbench -d27 -f ${PARAMFILE:?} -o ${RESULTDIR:?} VDBHOME=${VDBHOME:?}
+
