@@ -413,24 +413,55 @@ _archivedir() {
 }
 
 
-vdb_help="Run VDbench with <paramfile>, and output into [resultdir]"
+fio_prefill_help="Create a sequential [file=/tmp/testdata.fio] which is [compressible=0]% of [size=64M]"
+fio_prefill() {
+	filename=/tmp/testdata.fio
+	compressible=0
+	size=64M
+	[[ -n $1 ]] && filename=$1
+	[[ -n $2 ]] && compressible=$2
+	[[ -n $3 ]] && size=$3
+	
+	[[ $compressible -gt 0 ]] && compopt="--buffer_compress_percentage=$compressible --refill_buffers --buffer_pattern=0xdeadbeef"
+	cmd="fio --name=prefill --filename=$filename --size=$size --ioengine=libaio --bs=256k --rw=write --iodepth=1 --numjobs=1 --direct=1 --group_reporting --status-interval=5 $compopt"
+	echo $cmd
+	$cmd
+}
+
+
+fio_rw8k_help="Run a fio test; random 8K read/write of [filename=/tmp/testdata.fio] with file [size=64M]"
+fio_rw8k() {
+	filename=/tmp/testdata.fio
+	size=64M
+	[[ -n $1 ]] && filename=$1
+	[[ -n $2 ]] && size=$2
+	cmd="fio --name=8krwtest --filename=$filename --size=$size --ioengine=libaio --bs=8k --rw=randrw --iodepth=1 --numjobs=1 --direct=1 --time_based --ramp_time 10 --runtime 10 --group_reporting --status-interval=5"
+	echo $cmd
+	$cmd
+}
+
+vdb_help="Run Vdbench for <param_file> with [Vdbench opts] (Optionally set \$RESULTROOT=/tmp/vdb_results)"
 vdb() {
     paramfile=$1
-    result_root=/tmp/vdb_test_results
-    [[ -n $2 ]] && result_root=$2
-    VDBENCH=${SCRIPTPATH:?}/vdbench50407/vdbench
+    shift
+
+    [[ -z $RESULTROOT ]] && RESULTROOT=/tmp/vdb_results
+    [[ -z $VDBHOME ]] && VDBHOME=${SCRIPTPATH:?}/vdbench50407
+    VDBENCH=$VDBHOME/vdbench   
 
     [[ ! -f ${paramfile:?} ]] && { echo "ERROR: cannot find: $paramfile"; exit 1; }
     grep '$VDBHOME' ${paramfile:?} > /dev/null || echo "ERROR: parameter file must contain \$VDBHOME location"
     [[ ! -x ${VDBENCH:?} ]] && echo "ERROR: cannot find executable: $VDBENCH"
 
     paramname=$(basename $paramfile)
-    result_dir=${result_root:?}/${paramname:?}
+    result_dir=${RESULTROOT:?}/${paramname:?}
     _archivedir $result_dir
 
-    echo "Results output: $result_dir"
     echo "Running VDbench with paramfile: $paramfile"
-    ${VDBENCH:?} -d27 -f ${paramfile:?} -o ${result_dir:?} VDBHOME=$(dirname ${VDBENCH:?})
+    ${VDBENCH:?} -d27 -f ${paramfile:?} -o ${result_dir:?} VDBHOME=$(dirname ${VDBENCH:?}) $*
+    rc=$?
+	echo Vdbench RC=$rc
+    echo "Results output: $result_dir"
 }
 
 
