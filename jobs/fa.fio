@@ -1,0 +1,43 @@
+# Field Average workload
+
+[global]
+# Queue depth:
+numjobs=4
+iodepth=1
+
+# Runtime:
+time_based=1
+ramp_time=5
+runtime=10
+
+# Options:
+direct=1
+overwrite=1
+ioengine=posixaio
+group_reporting=1
+# Turn off latency and disk stats:
+disable_clat=1
+disable_slat=1
+slat_percentiles=0
+clat_percentiles=0
+disk_util=0
+
+
+# Compression & Dedupe:
+buffer_compress_percentage=50
+refill_buffers=1
+buffer_pattern=0xdeadbeef
+dedupe_percentage=50
+
+
+[job1]
+name=fieldavg
+# IO profile:
+rw=randrw
+rwmixread=60
+#percentage_random=70
+bs=24k
+#rate_iops=1000
+filename=/dev/nullb0:/dev/nullb1:/dev/nullb2:/dev/nullb3:/dev/nullb4
+size=1g
+

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Mark (Butty) Butterworth
 # Host to Host setup for iSCSI and NVME/TCP
 # create a function under a function_help description to auto add
 
@@ -465,9 +466,26 @@ vdb() {
 }
 
 
+fio_help="Run fio for <job_file> with [fio options] (Optionally set \$RESULTROOT=/tmp/fio_results)"
+fio() {
+    job_file=$1
+    shift
+
+    [[ -z $RESULTROOT ]] && RESULTROOT=/tmp/fio_results
+    [[ ! -f $job_file ]] && { echo "ERROR: cannot find job file: $job_file"; return 1; }
+    [[ ! -x $(which fio) ]] && { echo "ERROR: requires the fio utility: fio not found"; return 1; }
+
+    jobname=$(basename $job_file)
+    result_dir=${RESULTROOT:?}/${jobname:?}
+    fio --status-interval=5 $job_file $*
+    rc=$?
+    echo fio RC=$rc
+    echo "Results output: $result_dir"
+}
+
 usage() {
-    echo "Locahost IO testing tools"
-    echo "-------------------------"
+    echo "Locahost & Network IO testing tools"
+    echo "-----------------------------------"
     echo "Usage: $(basename $0) <command> <args>..."
     echo ""
 

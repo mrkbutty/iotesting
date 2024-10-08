@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Mark (Butty) Butterworth
 
 [[ -n $RESHOME ]] && RESHOME=/bmresults
 CSV=${RESHOME:?}/test_copy.csv
